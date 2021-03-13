@@ -1183,6 +1183,7 @@ const pgnReader = function (configuration) {
             } catch (e) {
                 return []
             }
+            set_to_start();
             return that.moves;
         }
     }

@@ -99,5 +99,25 @@ let pgnPrint = function (boardId, configuration) {
     base.generateMoves(null)
     return base
 }
+let pgnTactic = function (boardId, configuration) {
+    let base = pgnBase(boardId, Object.assign(
+        {
+            showFen: false, mode: 'tactic',
+            movable: {
+                free: false,
+                events: {
+                    after: function (orig, dest, meta) {
+                        base.onSnapEndTactic(orig, dest, meta)
+                    }
+                }
+            },
+            viewOnly: false
+        },
+        configuration))
+    base.generateHTML()
+    let board = base.generateBoard()
+    base.generateMoves()
+    return {base, board}
+}
 
-export {pgnBoard, pgnEdit, pgnBase, pgnPrint, pgnView}
+export {pgnBoard, pgnEdit, pgnBase, pgnPrint, pgnView, pgnTactic}

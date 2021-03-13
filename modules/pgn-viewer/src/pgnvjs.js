@@ -1,6 +1,6 @@
 import i18next from './i18n';
-import {pgnReader, Utils} from '@mliebelt/pgn-reader';
-//import {pgnReader, Utils} from "../../pgn-reader/src/pgn";
+//import {pgnReader, Utils} from '@mliebelt/pgn-reader';
+import {pgnReader, Utils} from "../../pgn-reader/src/pgn";
 import {Chessground} from 'chessground';
 import Timer from './Timer';
 import Mousetrap from 'mousetrap';
@@ -55,6 +55,9 @@ let pgnBase = function (boardId, configuration) {
     that.promMappings = {q: 'queen', r: 'rook', b: 'bishop', n: 'knight'};
     that.configuration = Object.assign(Object.assign(defaults, PgnBaseDefaults), configuration);
     that.mypgn = pgnReader(that.configuration);
+    that.configuration = that.mypgn.configuration;
+    that.mypgn.getMoves();
+    that.solved = false; // for tactics
     let game = that.mypgn.game;     // Use the same instance from chess.src
     let theme = that.configuration.theme || 'default';
     const hasMode = function (mode) {
@@ -92,6 +95,16 @@ let pgnBase = function (boardId, configuration) {
             }
         }
     }
+    
+    if (hasMode('tactic') ){
+        if (game.turn() == 'w') {
+            that.configuration.orientation='white';
+        }
+        else {
+            that.configuration.orientation='black';
+        }
+    }
+    
 
     /**
      * Allow logging of error to HTML.
@@ -188,8 +201,10 @@ let pgnBase = function (boardId, configuration) {
         }
 
         const node = element;
-        const movesNode = node.parentElement;
-        scrollParentToChild(movesNode, node);
+        if (node != null ){
+            const movesNode = node.parentElement;
+            scrollParentToChild(movesNode, node);
+        }
     }
 
     /**
@@ -248,7 +263,7 @@ let pgnBase = function (boardId, configuration) {
                 pieces[ep_field] = null;
                 that.board.setPieces(pieces);
             }
-            if (moveSpan(that.currentMove) === null) {
+            if (document.getElementById(id('movesId')) != null && moveSpan(that.currentMove) === null) {
                 generateMove(that.currentMove, null, move, move.prev, document.getElementById(id('movesId')), []);
             }
             unmarkMark(that.currentMove);
@@ -266,6 +281,88 @@ let pgnBase = function (boardId, configuration) {
             toggleColorMarker();
         }
     };
+
+    const onSnapEndTactic = function (from, to, meta) {
+        function popInOut(element, colour) {
+          element.style.backgroundColor = colour;
+          element.style.zIndex = "10000";
+          var duration = 0.02;
+          var interval = 1;//ms
+          var op = 0.0;
+          var timer = setInterval(function () {
+              if (op >= 1) {
+                  op = 1;
+                  clearInterval(timer);
+                  setTimeout(function(){
+                  var timer2 = setInterval(function(){
+                    if (op < 0){
+                      op = 0;
+                      element.style.backgroundColor = "";
+                      element.style.zIndex = "";
+                      clearInterval(timer2)
+                    }
+                    //element.style.opacity = op;
+                    if (op < 0.4 ) element.style.opacity = 0;
+  
+                    op -= 1.0/((1000/interval)*duration);
+  
+                  },interval);},1000);
+              }
+              //element.style.opacity = op;
+              if (op > 0.4 ) element.style.opacity = 1;
+  
+              op += 1.0/((1000/interval)*duration);
+          }, interval);
+        }
+        var cur = that.currentMove;
+        var position = that.position;
+        let primMove = {from: from, to: to};
+        var correctMove;
+        var next;
+  
+        if (cur == undefined) next = 0;
+        else next = that.mypgn.getMove(cur).next;
+  
+        var correctMove = that.mypgn.getMove(next);
+  
+        onSnapEnd(from,to,meta);
+  
+        if (!that.solved) {
+  
+          var tacticResult = setTimeout( function() {
+            //details on where we are now
+            var new_cur = that.currentMove;
+            var move = that.mypgn.getMove(new_cur);
+            var nextnext = move.next;
+            // if we've made the correct move go one forward and mark solved
+            if (correctMove && correctMove.from == move.from && correctMove.to == move.to && correctMove.notation.promotion == move.notation.promotion ){
+              // okay we've made the correct move, let's see if there's another one
+              if (nextnext) { 
+                // move forward to that
+                makeMove(new_cur, nextnext, null);
+                }
+              else {
+                // solved!
+                that.solved = true;
+                // let's not edit it any more
+                that.board.set({
+                  movable : { 'free' : false},
+                  viewOnly : true
+                });
+                // flash a success to the user
+                var boardNotification = document.getElementById(boardId+"Success");
+                if (boardNotification)  popInOut(boardNotification, "");
+              }
+            }
+            else{
+              //let's go back if we were wrong
+              if (cur == undefined) makeMove( new_cur, null, null);
+              else makeMove(new_cur,cur,null);
+            }}, 200);
+        }
+      };
+  
+
 
     // Utility function for generating general HTML elements with id, class (with theme)
     function createEle(kind, id, clazz, my_theme, father) {
@@ -422,10 +519,28 @@ let pgnBase = function (boardId, configuration) {
         /** Add an error div to show errors */
         that.errorDiv = createEle("div", boardId + "Error", 'error', null, divBoard);
 
+        if (hasMode('tactic')){
+            /** Add a success div to show flash tactic success */
+            that.successDiv = createEle('div', boardId+ "Success", 'boardNotification', theme, divBoard );
+            let stack = createEle("span", null, "fa-stack", theme, that.successDiv)
+            let circle = createEle("i",null, "fas fa-circle fa-inverse fa-stack-1x", theme, stack);
+            let check = createEle("i",null, "fas fa-check-circle fa-stack-1x fa-inverse", theme, stack);
+            circle.style.color = "white";
+            check.style.color="green";
+            that.successDiv.style.fontSize = "100px";
+            that.successDiv.style.zIndex = -1;
+            that.successDiv.style.textAlign = "center";
+            that.successDiv.style.opacity = 1;
+            that.successDiv.style.position = "absolute";
+            that.successDiv.style['backgroundcolor'] = 'green';
+
+        }
+
+
         /** outerBoard */
         const outerInnerBoardDiv = createEle("div", null, "outerBoard", null, divBoard);
         let boardAndDiv = createEle('div', null, 'boardAnd', theme, outerInnerBoardDiv);
-
+        
         /** topInner for headers / time of Black. TODO: Orientation should switch that then. **/
         let topInnerBoardDiv = createEle("div", null, "topInnerBoard", theme, boardAndDiv);
         let blackHeader = createEle('div', id('topHeaderId'), "blackHeader", theme, boardAndDiv);
@@ -434,7 +549,7 @@ let pgnBase = function (boardId, configuration) {
         /** bottomInner for headers / time of White. TODO: Orientation should switch that then. **/
         let bottomInnerBoardDiv = createEle("div", null, "bottomInnerBoard", theme, boardAndDiv);
         let whiteHeader = createEle('div', id('bottomHeaderId'), "whiteHeader", theme, boardAndDiv);
-        let bottomTime = createEle("div", null, "bottomTime", theme, bottomInnerBoardDiv);
+        let bottomTime = createEle("div", null, "bottomTime", theme, boardAndDiv);
 
         /** Buttons */
         if (hasMode('view') || hasMode('edit')) {
@@ -552,6 +667,7 @@ let pgnBase = function (boardId, configuration) {
 
         const resizeLayout = function () {
             console.log("Start computing layout")
+
             if (hasMode('board')) {
                 if (document.getElementById(id('colorMarkerId'))) {
                     document.getElementById(id('colorMarkerId')).style.marginLeft = 'auto';
@@ -566,6 +682,17 @@ let pgnBase = function (boardId, configuration) {
             if (hasHeaders()) {
                 _boardHeight = `${parseInt(_boardHeight) + 40}px`;
             }
+            
+            if (hasMode('tactic')){
+                divBoard.style.gridTemplateRows = `0px auto minmax(auto, ${_boardHeight}) 0px`;
+                divBoard.style.gridTemplateColumns = _boardWidth
+                that.successDiv.style.width = _boardWidth;
+                that.successDiv.style.height = _boardHeight;
+                that.successDiv.style.lineHeight = _boardHeight;
+
+                return;
+            }
+
             let _buttonsHeight = document.getElementById(id('buttonsId')).offsetHeight;
             let _gamesHeight = that.configuration.manyGames ? '40px' : '0'
             if (that.configuration.layout === 'left' || that.configuration.layout === 'right') {
@@ -586,10 +713,17 @@ let pgnBase = function (boardId, configuration) {
                 } else if (that.configuration.layout === 'bottom') {
                     divBoard.style.gridTemplateRows = `${_gamesHeight} auto minmax(0,${_movesHeight}px) minmax(auto,${_boardHeight}) ${_buttonsHeight}px`;
                 }
+                else{
+                    divBoard.style.gridTemplateRows = _boardHeight;
+                }
                 divBoard.style.gridTemplateColumns = _boardWidth
             }
         }
         resizeLayout()
+        
+        
+       //divBoard.style.border = "thick solid #0000FF";
+
     };
 
     /**
@@ -656,7 +790,7 @@ let pgnBase = function (boardId, configuration) {
         if (boardConfiguration.coordsInner) {
             el.classList.add('coords-inner');
         }
-        if (hasMode('edit')) {
+        if (hasMode('edit') || hasMode('tactic')) {
             game.load(boardConfiguration.position);
             let toMove = (game.turn() == 'w') ? 'white' : 'black';
             that.board.set({
@@ -969,14 +1103,16 @@ let pgnBase = function (boardId, configuration) {
         if (next) {
             scrollToView(moveSpan(next));
         }
-        if (hasMode('edit')) {
+        if (hasMode('edit') || hasMode('tactic')) {
             let col = game.turn() == 'w' ? 'white' : 'black';
             that.board.set({
                 movable: Object.assign({}, that.board.state.movable, {color: col, dests: possibleMoves(game)}),
                 turnColor: col, check: game.in_check()
             });
-            if (next) {
-                fillComment(next);
+            if (hasMode('edit')){
+                if (next) {
+                    fillComment(next);
+                }
             }
         } else if (hasMode('view')) {
             let col = game.turn() == 'w' ? 'white' : 'black';
@@ -1113,6 +1249,8 @@ let pgnBase = function (boardId, configuration) {
                 });
             };
             const nextMove = function () {
+                // if we're in tactic, only allow to scroll if we've solved 
+                if (hasMode('tactic') && (!that.solved)) return;
                 let fen = null;
                 if ((typeof that.currentMove == 'undefined') || (that.currentMove === null)) {
                     fen = that.mypgn.getMove(0).fen;
@@ -1125,6 +1263,8 @@ let pgnBase = function (boardId, configuration) {
                 }
             };
             const prevMove = function () {
+                // if we're in tactic, only allow to scroll if we've solved 
+                if (hasMode('tactic') && (!that.solved)) return;
                 let fen = null;
                 if ((typeof that.currentMove == 'undefined') || (that.currentMove == null)) {
                     /*fen = that.mypgn.getMove(0).fen;
@@ -1143,6 +1283,11 @@ let pgnBase = function (boardId, configuration) {
             const firstMove = function () {
                 makeMove(null, null, null);
             };
+            if (hasMode('tactic')){
+                bind_key("left", prevMove);
+                bind_key("right", nextMove);
+                return;
+            }
             const timer = new Timer(10);
             timer.bind(that.configuration.timerTime, function () {
                 nextMove();
@@ -1290,7 +1435,7 @@ let pgnBase = function (boardId, configuration) {
          */
         const regenerateMoves = function (myMoves) {
             const movesDiv = document.getElementById(id('movesId'))
-            movesDiv.innerHTML = ''
+            if (movesDiv) movesDiv.innerHTML = ''
             let prev = null
             const varStack = [];
             let firstMove = 0;
@@ -1301,6 +1446,10 @@ let pgnBase = function (boardId, configuration) {
                 }
             }
         };
+        if (hasMode('tactic')){
+            bindFunctions();
+            return;
+        }
         regenerateMoves(myMoves);
         bindFunctions();
         generateHeaders();
@@ -1343,7 +1492,8 @@ let pgnBase = function (boardId, configuration) {
         generateBoard: generateBoard,
         generateMoves: generateMoves,
         manualMove: manualMove,
-        onSnapEnd: onSnapEnd
+        onSnapEnd: onSnapEnd,
+        onSnapEndTactic: onSnapEndTactic
     };
 };
 
